@@ -3059,6 +3059,10 @@ float * zfp_decompress_blocksize_4(unsigned char * comp_data, size_t comp_data_s
 	return dec_data;
 }
 
+size_t * tmp_sizes;
+size_t * tmp_sizes_before_lossless;
+int shadow_block_size = 128; // assume it is divisible by data size
+
 unsigned char * compress_block(float * data, size_t r3, size_t r2, size_t r1, double eb, size_t * out_size, size_t * out_size_before_lossless, int * select){
 	size_t num_elements = r3*r2*r1;
 	float value_range = 0;
@@ -3202,32 +3206,149 @@ unsigned char * compress_block(float * data, size_t r3, size_t r2, size_t r1, do
 
 	float interpolated_sz_psnr = (cur_psnr - last_psnr) / (cur_bit_rate - last_bit_rate) * (zfp_bit_rate - last_bit_rate) + last_psnr; 
 	unsigned char * comp_data = NULL;
+	//use_sz = true;use_zfp = false;
+	//use_zfp = true;
 	if(use_sz) interpolated_sz_psnr = zfp_psnr + 1;
 	if(use_zfp) interpolated_sz_psnr = zfp_psnr - 1;
 	if(interpolated_sz_psnr > zfp_psnr){
 		SZ_Init(NULL);
-		comp_data = SZ_compress_args(SZ_FLOAT, (void *) data, out_size, REL, 0, eb, 0, 0, 0, r1, r2, r3);
+		// comp_data = SZ_compress_args(SZ_FLOAT, (void *) data, out_size, REL, 0, eb, 0, 0, 0, r1, r2, r3);
+		// change to block-wise for less memory overhead
+		comp_data = (unsigned char *) malloc(r1*r2*r3*sizeof(float));
+		unsigned char * cur_comp_data_pos = comp_data;
+		size_t total_size = 0;
+		float * data_buffer = (float *) malloc(shadow_block_size*shadow_block_size*shadow_block_size*sizeof(float));
+		int num_x = (r1 - 1) / shadow_block_size + 1;
+                int num_y = (r2 - 1) / shadow_block_size + 1;
+                int num_z = (r3 - 1) / shadow_block_size + 1;
+		tmp_sizes = (size_t *) malloc(num_x*num_y*num_z*sizeof(size_t));
+		int id = 0;
+		for(int i=0; i<num_x; i++){
+			for(int j=0; j<num_y; j++){
+				for(int k=0; k<num_z; k++){
+					int block_size_x = (i < num_x-1) ? shadow_block_size : r1 - i*shadow_block_size;
+                                        int block_size_y = (j < num_y-1) ? shadow_block_size : r2 - j*shadow_block_size;
+                                        int block_size_z = (k < num_z-1) ? shadow_block_size : r3 - k*shadow_block_size;
+                                        float * data_buffer_pos = data_buffer;
+                                        const float * data_pos = (const float *) (data + i*shadow_block_size*r2*r3 + j*shadow_block_size*r3 + k*shadow_block_size);
+                                        for(int ii=0; ii<block_size_x; ii++){
+                                                for(int jj=0; jj<block_size_y; jj++){
+                                                        for(int kk=0; kk<block_size_z; kk++){
+                                                                *(data_buffer_pos ++) = *(data_pos ++);
+                                                        }
+                                                        data_pos += r3 - block_size_z;
+                                                }
+                                                data_pos += r2*r3 - block_size_y*r3;
+                                        }
+					unsigned char * tmp_comp_data = SZ_compress_args(SZ_FLOAT, (void *) data_buffer, &tmp_sizes[id], ABS, value_range*eb, 0, 0, 0, 0, block_size_x, block_size_y, block_size_z);
+					memcpy(cur_comp_data_pos, tmp_comp_data, tmp_sizes[id]);
+					cur_comp_data_pos += tmp_sizes[id];
+					free(tmp_comp_data);
+					total_size += tmp_sizes[id];
+					id ++;
+				}
+			}
+		}
+		*out_size = total_size;
 		SZ_Finalize();
+		free(data_buffer);
 		*select = 0;
 	}
 	else{
 		// printf("sz_compress_num: %d\n", sz_compress_num);
-		comp_data = zfp_compress_block_size_4(data, r1, r2, r3, value_range*eb, best_zfp_factor, sz_compress_num, out_size, out_size_before_lossless, &mse[0], &bit_rates[0]);
+		// comp_data = zfp_compress_block_size_4(data, r1, r2, r3, value_range*eb, best_zfp_factor, sz_compress_num, out_size, out_size_before_lossless, &mse[0], &bit_rates[0]);
 		// comp_data = zfp_compress(data, r1, r2, r3, value_range*eb, best_zfp_factor, sz_compress_num, out_size, out_size_before_lossless, &mse[0], &bit_rates[0]);
+		comp_data = (unsigned char *) malloc(r1*r2*r3*sizeof(float));
+                unsigned char * cur_comp_data_pos = comp_data;
+                size_t total_size = 0;
+                float * data_buffer = (float *) malloc(shadow_block_size*shadow_block_size*shadow_block_size*sizeof(float));
+                int num_x = (r1 - 1) / shadow_block_size + 1;
+                int num_y = (r2 - 1) / shadow_block_size + 1;
+                int num_z = (r3 - 1) / shadow_block_size + 1;
+                tmp_sizes = (size_t *) malloc(num_x*num_y*num_z*sizeof(size_t));
+		tmp_sizes_before_lossless = (size_t *) malloc(num_x*num_y*num_z*sizeof(size_t));
+                int id = 0;
+                for(int i=0; i<num_x; i++){
+                        for(int j=0; j<num_y; j++){
+                                for(int k=0; k<num_z; k++){
+					int block_size_x = (i < num_x-1) ? shadow_block_size : r1 - i*shadow_block_size;
+					int block_size_y = (j < num_y-1) ? shadow_block_size : r2 - j*shadow_block_size;
+					int block_size_z = (k < num_z-1) ? shadow_block_size : r3 - k*shadow_block_size;
+                                        float * data_buffer_pos = data_buffer;
+                                        const float * data_pos = (const float *) (data + i*shadow_block_size*r2*r3 + j*shadow_block_size*r3 + k*shadow_block_size);
+                                        for(int ii=0; ii<block_size_x; ii++){
+                                                for(int jj=0; jj<block_size_y; jj++){
+                                                        for(int kk=0; kk<block_size_z; kk++){
+                                                                *(data_buffer_pos ++) = *(data_pos ++);
+                                                        }
+                                                        data_pos += r3 - block_size_z;
+                                                }
+                                                data_pos += r2*r3 - block_size_y*r3;
+                                        }
+                                        unsigned char * tmp_comp_data = zfp_compress_block_size_4(data_buffer, block_size_x, block_size_y, block_size_z, value_range*eb, best_zfp_factor, sz_compress_num, &tmp_sizes[id], &tmp_sizes_before_lossless[id], &mse[0], &bit_rates[0]);
+                                        memcpy(cur_comp_data_pos, tmp_comp_data, tmp_sizes[id]);
+                                        cur_comp_data_pos += tmp_sizes[id];
+                                        free(tmp_comp_data);
+                                        total_size += tmp_sizes[id];
+                                        id ++;
+                                }
+                        }
+                }
+		free(data_buffer);
+                *out_size = total_size;
 		*select = 1;
 	}
 	return comp_data;
 }
 
 float * decompress_block(unsigned char * comp_data, size_t comp_data_size, size_t comp_data_size_before_lossless, int select, int r3, int r2, int r1){
-	if(select) return zfp_decompress_blocksize_4(comp_data, comp_data_size, comp_data_size_before_lossless, r1, r2, r3);
+	//if(select) return zfp_decompress_blocksize_4(comp_data, comp_data_size, comp_data_size_before_lossless, r1, r2, r3);
 	// if(select) return zfp_decompress(comp_data, comp_data_size, comp_data_size_before_lossless, r1, r2, r3);
-	else{
+	//else{
 		SZ_Init(NULL);
-		float * dec_data = (float *) SZ_decompress(SZ_FLOAT, comp_data, comp_data_size, 0, 0, r1, r2, r3);
+		// float * dec_data = (float *) SZ_decompress(SZ_FLOAT, comp_data, comp_data_size, 0, 0, r1, r2, r3);
+		unsigned char * cur_comp_data_pos = comp_data;
+                size_t total_size = 0;
+                float * dec_data = (float *) malloc(r1*r2*r3*sizeof(float));
+		float * tmp_dec_data = NULL;
+		int num_x = (r1 - 1) / shadow_block_size + 1;
+                int num_y = (r2 - 1) / shadow_block_size + 1;
+                int num_z = (r3 - 1) / shadow_block_size + 1;
+                int id = 0;
+		for(int i=0; i<num_x; i++){
+                        for(int j=0; j<num_y; j++){
+                                for(int k=0; k<num_z; k++){
+					int block_size_x = (i < num_x-1) ? shadow_block_size : r1 - i*shadow_block_size;
+                                        int block_size_y = (j < num_y-1) ? shadow_block_size : r2 - j*shadow_block_size;
+                                        int block_size_z = (k < num_z-1) ? shadow_block_size : r3 - k*shadow_block_size;
+					if(select){
+						tmp_dec_data = zfp_decompress_blocksize_4(cur_comp_data_pos, tmp_sizes[id], tmp_sizes_before_lossless[id], block_size_x, block_size_y, block_size_z);
+					}
+					else{
+						tmp_dec_data = (float *) SZ_decompress(SZ_FLOAT, cur_comp_data_pos, tmp_sizes[id], 0, 0, block_size_x, block_size_y, block_size_z);
+					}
+					float * data_buffer_pos = tmp_dec_data;
+                                        float * dec_data_pos = (float *) (dec_data + i*shadow_block_size*r2*r3 + j*shadow_block_size*r3 + k*shadow_block_size);
+                                        for(int ii=0; ii<block_size_x; ii++){
+                                                for(int jj=0; jj<block_size_y; jj++){
+                                                        for(int kk=0; kk<block_size_z; kk++){
+                                                                *(dec_data_pos ++) = *(data_buffer_pos ++);
+                                                        }
+                                                        dec_data_pos += r3 - block_size_z;
+                                                }
+                                                dec_data_pos += r2*r3 - block_size_y*r3;
+                                        }
+					cur_comp_data_pos += tmp_sizes[id];
+					free(tmp_dec_data);
+					id ++;
+				}
+			}
+		}
+		free(tmp_sizes);
+		if(select) free(tmp_sizes_before_lossless);
 		SZ_Finalize();
 		return dec_data;
-	}
+	//}
 }
 
 
