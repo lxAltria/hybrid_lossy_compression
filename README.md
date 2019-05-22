@@ -7,13 +7,12 @@ Instrunctions on our solution:
 4. Install SZ
 5. Install ZFP-0.3.1
 6. Compile the code (link to the libraries built above) using the shell script.
-Optional
-7. We add a block-wise version to improve memory overhead in the rebuttal. To compile this version, do "cp sz_zfp_selector_block_version.cpp sz_zfp_selector.cpp" and re-compile the code. Please note that this only works for the sequential code for now ("sz_zfp_select.cpp", we also only evaluate the compression ratio instead of parallel performance in the paper).
+7. We add a block-wise version to improve memory overhead in the rebuttal. To compile this version, do "cp sz_zfp_selector_block_version.cpp sz_zfp_selector.cpp" and re-compile the code. Please note that this only works for the sequential code for now ("sz_zfp_select.cpp", we also only evaluate the compression ratio instead of parallel performance in the paper). (Optional: for the added experiment in the rebuttal)
 
 Instructions on comparison:
 1. Download and install SZ-2.0 (http://dstats.net/download/http://www.mcs.anl.gov/~shdi/download/sz-2.0.0.0.tar.gz)
 2. Download and install ZFP-0.5.4 (https://computation.llnl.gov/projects/floating-point-compression/download/zfp-0.5.4.tar.gz)
-3. Compile the corresponding code ("parallel_sz_2.0.c" and "")
+3. Compile the corresponding code ("parallel_sz_2.0.c" and "parallel_zfp.c")
 
 Preprocessing on dataset:
 1. Download the datasets from https://sdrbench.github.io. Please download the data with logarithmic transform (except SCALE as it only has original data) as this kind of data is for visualization purpose.
